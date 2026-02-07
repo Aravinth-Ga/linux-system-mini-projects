@@ -1,24 +1,25 @@
 /*
     * mini_log.c
     *
-    * Description: A simple logging utility for the SmartLog project.
-    * 
+    * Simple log writer for the SmartLog project.
+    * It appends one line to a file and can optionally flush to disk.
+    *
     * System calls used:
-    *    - open(): To create or open the log file.
-    *    - write(): To write log entries to the file.
-    *    - close(): To close the log file after writing.
+    *    - open(): create or open the log file
+    *    - write(): write the log entry
+    *    - close(): close the file when done
     *
     * Flags for open():
-    *    - O_WRONLY: Open the file for write-only access.
-    *    - O_CREAT: Create the file if it does not exist.
-    *    - O_APPEND: Append to the end of the file if it already exists.
+    *    - O_WRONLY: open the file for writing only
+    *    - O_CREAT: create the file if it is missing
+    *    - O_APPEND: always write at the end of the file
     *
-    * Note: This is a simplified implementation for demonstration purposes. In a production environment, consider adding error handling, log rotation, and support for different log levels (e.g., INFO, WARNING, ERROR).
-    * 
+    * Note: This is a small demo. A full logger would add log levels,
+    * rotation, and stronger error handling.
+    *
     * Author: Aravinthraj Ganesan
     * Date: 2024-06-01
-    * Version: 1.0
-
+    * Version: 2.0
 */
 
 #define _POSIX_C_SOURCE 199309L
@@ -35,6 +36,10 @@
 #define MESSAGE_LEN_MAX   200
 
 
+/*
+    * Return a current timestamp in nanoseconds.
+    * Used to tag each log line.
+*/
 uint64_t time_stamp(void)
 {
     struct timespec ts;
@@ -44,6 +49,10 @@ uint64_t time_stamp(void)
 }
 
 
+/*
+    * Write the full buffer to the file descriptor.
+    * Returns 0 on success, 1 on error.
+*/
 static int write_all(int file_descriptor, const void* msg_buff, size_t msg_length)
 {
     const char* message = (const char*) msg_buff;
@@ -76,16 +85,28 @@ static int write_all(int file_descriptor, const void* msg_buff, size_t msg_lengt
     return 0;
 }
 
+/*
+    * Print a short error or usage message to stderr.
+*/
 static int write_usage(const char* error_msg)
 {
     return write_all(STDERR_FILENO, error_msg, strlen(error_msg));
 }
 
+/*
+    * Entry point for the mini log writer.
+    * Steps:
+    * 1) parse arguments
+    * 2) check existing file (if any)
+    * 3) open/create the log file
+    * 4) format and write one log line
+    * 5) optionally flush to disk
+*/
 int main(int argc, char* argv[])
 {
     uint8_t durable = 0;
     
-    // 1. Get the command line argument
+    // 1. Read command-line arguments
     if(argc == 4)
     {
         if(strcmp(argv[3], "--durable") == 0)
@@ -109,7 +130,7 @@ int main(int argc, char* argv[])
     if(msg[0] == '\0')
         return write_usage("Log message is Empty.\n");
    
-    // 2. Permission check
+    // 2. Check whether the file exists and is not a directory
     struct stat fstat_old;
     int file1_exist = stat(file_path, &fstat_old); 
     int stat1_errno = errno;
@@ -124,7 +145,7 @@ int main(int argc, char* argv[])
         else
         {
             printf("[LOG FILE PERMISSION CHECK]\n");            
-            printf("The file %s exist.\n", file_path);
+            printf("The file %s exists.\n", file_path);
             printf("Owner UID : %u\n",fstat_old.st_uid);
             printf("Group ID : %u\n", fstat_old.st_gid);
             printf("File Permission : %04o\n", fstat_old.st_mode & 0777);        
@@ -141,12 +162,11 @@ int main(int argc, char* argv[])
     }
 
     // 3. Open the file
-
-    // filemode
+    // File mode (before umask). The final permissions can be masked by umask.
     mode_t mode = S_IRUSR | S_IWUSR | S_IRGRP;
 
-    // open flag 
-    // O_APPEND is added to update the file EOF automatically.
+    // Open flags
+    // O_APPEND keeps writes at the end of the file.
     int flag = O_WRONLY | O_CREAT | O_APPEND;
 
     int fd = open(file_path, flag, mode);
@@ -157,6 +177,7 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    // Re-check permissions if the file was created by open().
     struct stat fstat_new;
     int file2_exist = stat(file_path, &fstat_new);
     int stat2_errno = errno;
@@ -167,7 +188,7 @@ int main(int argc, char* argv[])
         if(file2_exist == 0)
         {
             printf("[LOG FILE PERMISSION CHECK]\n");            
-            printf("The file %s does not exist and it is created now.\n",file_path);
+            printf("The file %s does not exist and is created now.\n",file_path);
             printf("Owner UID : %u\n",fstat_new.st_uid);
             printf("Group ID : %u\n", fstat_new.st_gid);
             printf("File Permission : %04o\n", fstat_new.st_mode & 0777);        
@@ -179,9 +200,10 @@ int main(int argc, char* argv[])
             return 1;
         }
     }
-    // 4. Write the data into the log file
+    // 4. Build and write the log entry
 
     char buff[MESSAGE_LEN_MAX + 1];
+    // Keep the log message size bounded.
     if(msg_len > MESSAGE_LEN_MAX)
     {
         memcpy(buff, msg, (MESSAGE_LEN_MAX - 3));
@@ -194,7 +216,14 @@ int main(int argc, char* argv[])
     pid_t pid = getpid();   
     char log_buffer[1024];
     
-    int log_len = snprintf(log_buffer, sizeof(log_buffer), "[%llu ns] [PID = %ld] [MESSAGE = %s]\n", (unsigned long long)time_ns, (long)pid, msg);
+    int log_len = snprintf(
+        log_buffer,
+        sizeof(log_buffer),
+        "[%llu ns] [PID = %ld] [MESSAGE = %s]\n",
+        (unsigned long long)time_ns,
+        (long)pid,
+        msg
+    );
 
     if(log_len < 0 || (log_len >= (int)sizeof(log_buffer)))
     {
@@ -210,13 +239,14 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // 5. durability
+    // 5. Durability: flush data to disk when --durable is used
 
     if(durable != 0)
     {
         /*
-            fdatasync() is used to flush all modified data of the fd to the disk.This ensures that all written data is physically stored on the disk, providing durability in case of power failures or system crashes.
-            This provides better performance compared to fsync() when only data durability is required without the need to flush metadata.
+            fdatasync() flushes written data to disk. This makes the write
+            durable across crashes or power loss. It is usually faster than
+            fsync() because it does not have to flush all metadata.
         */
        if(fdatasync(fd) < 0)
        {
@@ -227,7 +257,7 @@ int main(int argc, char* argv[])
 
     }
 
-    // 6. Close
+    // 6. Close the file
     if(close(fd)<0)
     {
         perror("close");
