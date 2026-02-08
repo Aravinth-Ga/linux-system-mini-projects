@@ -19,7 +19,7 @@
     *
     * Author: Aravinthraj Ganesan
     * Date: 2024-06-01
-    * Version: 2.0
+    * Version: 3.0
 */
 
 #define _POSIX_C_SOURCE 199309L
@@ -34,12 +34,15 @@
 #include <time.h>
 #include <stdlib.h>
 
-#define MESSAGE_LEN_MAX   200
-
+#define MESSAGE_LEN_MAX         200
+#define ENABLE                  1
+#define DISABLE                 0
+#define CURRENT_WORKING_DIR     0xAA
+#define USER_INPUT_DIR          0xBB
 
 /*
-    * Return a current timestamp in nanoseconds.
-    * Used to tag each log line.
+    * Return the current time in nanoseconds.
+    * Used to timestamp each log line.
 */
 uint64_t time_stamp(void)
 {
@@ -52,6 +55,7 @@ uint64_t time_stamp(void)
 
 /*
     * Write the full buffer to the file descriptor.
+    * Retries on EINTR.
     * Returns 0 on success, 1 on error.
 */
 static int write_all(int file_descriptor, const void* msg_buff, size_t msg_length)
@@ -98,66 +102,74 @@ static int write_usage(const char* error_msg)
     * Entry point for the mini log writer.
     * Steps:
     * 1) parse arguments
-    * 2) check existing file (if any)
+    * 2) validate inputs and existing file (if any)
     * 3) open/create the log file
     * 4) format and write one log line
     * 5) optionally flush to disk
 */
 int main(int argc, char* argv[])
 {
-    uint8_t durable = 0;
+    uint8_t durable = DISABLE;
+    unsigned long max_byte_val;    
+    uint8_t max_bytes_config = DISABLE;
+    uint8_t dir_cwd_or_upd  = CURRENT_WORKING_DIR;  // tracks cwd vs user-provided directory
     
-    // Command line argument count validation
+    // Validate argument count.
     if(argc < 3 || argc > 6)
     {
         return write_usage("Usage :./mini_log <file_path> \"<message>\" [--durable] [--max-bytes] [size]\n"); 
     }
 
-    // 1. Read command-line arguments
+    // 1. Read command-line arguments.
     for(uint8_t arg_idx = 3; arg_idx < argc; arg_idx++)
     {
         if(strcmp(argv[arg_idx],"--durable") == 0) 
         {
-            durable = 1;
+            durable = ENABLE;
         }
         else if(strcmp(argv[arg_idx], "--max-bytes") == 0)
         {
-            // Check if the max-bytes values are provided
+            // Ensure a value is provided after --max-bytes.
             if(argc <= (arg_idx + 1))
-            {
                 return write_usage("Usage : max-bytes values are missig.\n"); 
-            }
-
-            unsigned long max_byte_val;
 
             arg_idx += 1;
-            // convert the max-bytes value from string to unsigned long
+            // Parse the max-bytes value.
             max_byte_val = strtoul(argv[arg_idx],NULL, 10);
+            max_bytes_config = ENABLE;
 
-            // Check if the max byte values are valid.
+            // Reject zero as invalid.
             if(max_byte_val == 0)
                 return write_usage("Usage : max-bytes values must not be 0.\n"); 
-
         }
         else
         {
-            // Return when the command line arguments has unknown values.
+            // Unknown option.
             return write_usage("Error! Unknown option.\nUsage :./mini_log <file_path> \"<message>\" [--durable] [--max-bytes] [size]\n"); 
         }
 
     }
 
+    // 2. Validate the command line arguments.
+
     const char* file_path = argv[1];
     const char* msg = argv[2];
     size_t msg_len = strlen(msg);
 
-    // Message must not be empty to log
+    // Message must not be empty.
     if(msg[0] == '\0')
         return write_usage("Log message is Empty.\n");
 
-    printf("Path of the log file is: %s\n", file_path);
+    if(max_bytes_config == ENABLE)
+    {
+        // Track whether the path includes a directory.
+        if(strchr(file_path,'/') == NULL)
+            dir_cwd_or_upd = CURRENT_WORKING_DIR; // current working directory
+        else
+            dir_cwd_or_upd = USER_INPUT_DIR;
+    }
    
-    // 2. Check whether the file exists and is not a directory
+    // 3. Check whether the log path already exists.
     struct stat fstat_old;
     int file1_exist = stat(file_path, &fstat_old); 
     int stat1_errno = errno;
@@ -166,7 +178,7 @@ int main(int argc, char* argv[])
     {
         if(S_ISDIR(fstat_old.st_mode) != 0)
         {
-            fprintf(stderr, "Error : %s is a directory.\n",file_path);
+            fprintf(stderr, "Error : %s is a directory. Provide a file name.\n",file_path);
             return 1;
         }
         else
@@ -188,12 +200,101 @@ int main(int argc, char* argv[])
 
     }
 
-    // 3. Open the file
+    // 4. Build the log entry before open.
+    char log_buffer[1024];
+    int log_len = 0; 
+    char buff[MESSAGE_LEN_MAX + 1];
+
+    // Keep the log message size bounded.
+    if(msg_len > MESSAGE_LEN_MAX)
+    {
+        memcpy(buff, msg, (MESSAGE_LEN_MAX - 3));
+        memcpy(buff + (MESSAGE_LEN_MAX - 3), "...", 3);
+        buff[MESSAGE_LEN_MAX] = '\0';
+        msg = buff;
+    }
+
+    uint64_t time_ns = time_stamp();
+    pid_t pid = getpid();   
+    
+    log_len = snprintf(
+        log_buffer,
+        sizeof(log_buffer),
+        "[%llu ns] [PID = %ld] [MESSAGE = %s]\n",
+        (unsigned long long)time_ns,
+        (long)pid,
+        msg
+    );
+
+    if(log_len < 0 || (log_len >= (int)sizeof(log_buffer)))
+    {
+        perror("snprintf");
+        return 1;
+    }   
+
+    // 5. log rotation if enabled
+    if(max_bytes_config == ENABLE && file1_exist == 0)
+    {
+        unsigned long long cur_file_size = (unsigned long long)fstat_old.st_size;
+        unsigned long long new_file_size = (unsigned long long)cur_file_size + log_len;
+
+        if(cur_file_size < new_file_size)
+        {
+            char new_path[4096];
+            int n = snprintf(new_path, sizeof(new_path), "%s.1", file_path);
+
+            if(n < 0 || n >= (int)sizeof(new_path))
+            {
+                perror("snprintf");
+                return 1;
+            }
+
+            if(rename(file_path, new_path) < 0)
+            {
+                perror("rename");
+                return 1;
+            }
+
+            // sync the local directory
+            int fd_dir = 0;
+            if(dir_cwd_or_upd == CURRENT_WORKING_DIR)
+            {
+                fd_dir = open(".", O_RDONLY);
+            }
+            else
+            {
+                // TODO : yet to be implemented for user input directory
+                //fd_dir = open(file_path, O_RDONLY);
+            }
+            if(fd_dir < 0)
+            {
+                perror("open");
+                return 1;
+            }
+
+            if(fsync(fd_dir)< 0)
+            {
+                perror("fsync");
+                return 1;
+            }
+
+            if(close(fd_dir) < 0)
+            {
+                perror("close");
+            }
+
+            // Ensure the flags are set once the file is renamed.
+            stat1_errno = ENOENT;
+            file1_exist = -1;
+        }
+
+    }
+
+    // 6. Open the file (create it if it does not exist).
     // File mode (before umask). The final permissions can be masked by umask.
     mode_t mode = S_IRUSR | S_IWUSR | S_IRGRP;
 
-    // Open flags
-    // O_APPEND keeps writes at the end of the file.
+    // Open flags. O_APPEND keeps writes at the end of the file.
     int flag = O_WRONLY | O_CREAT | O_APPEND;
 
     int fd = open(file_path, flag, mode);
@@ -204,7 +305,7 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // Re-check permissions if the file was created by open().
+    // 7. Re-check permissions if the file was created by open().
     struct stat fstat_new;
     int file2_exist = stat(file_path, &fstat_new);
     
@@ -225,38 +326,8 @@ int main(int argc, char* argv[])
             return 1;
         }
     }
-    // 4. Build and write the log entry
 
-    char buff[MESSAGE_LEN_MAX + 1];
-    // Keep the log message size bounded.
-    if(msg_len > MESSAGE_LEN_MAX)
-    {
-        memcpy(buff, msg, (MESSAGE_LEN_MAX - 3));
-        memcpy(buff + (MESSAGE_LEN_MAX - 3), "...", 3);
-        buff[MESSAGE_LEN_MAX] = '\0';
-        msg = buff;
-    }
-
-    uint64_t time_ns = time_stamp();
-    pid_t pid = getpid();   
-    char log_buffer[1024];
-    
-    int log_len = snprintf(
-        log_buffer,
-        sizeof(log_buffer),
-        "[%llu ns] [PID = %ld] [MESSAGE = %s]\n",
-        (unsigned long long)time_ns,
-        (long)pid,
-        msg
-    );
-
-    if(log_len < 0 || (log_len >= (int)sizeof(log_buffer)))
-    {
-        perror("snprintf");
-        close(fd);
-        return 1;
-    }   
-
+    // 8. Write the log entry.
     if(write_all(fd, log_buffer, (size_t)log_len) != 0)
     {
         perror("write");
@@ -264,8 +335,8 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // 5. Durability: flush data to disk when --durable is used
-
+    
+    // 9. Durability: flush data to disk when --durable is used.
     if(durable != 0)
     {
         /*
@@ -282,7 +353,7 @@ int main(int argc, char* argv[])
 
     }
 
-    // 6. Close the file
+    // 10. Close the file.
     if(close(fd)<0)
     {
         perror("close");
