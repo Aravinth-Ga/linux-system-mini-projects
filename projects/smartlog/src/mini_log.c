@@ -22,7 +22,9 @@
     * Version: 3.0
 */
 
+#define _GNU_SOURCE
 #define _POSIX_C_SOURCE 199309L
+
 
 #include <fcntl.h>
 #include <stdio.h>
@@ -33,12 +35,15 @@
 #include <string.h>
 #include <time.h>
 #include <stdlib.h>
+#include <signal.h>
 
 #define MESSAGE_LEN_MAX         200
 #define ENABLE                  1
 #define DISABLE                 0
 #define CURRENT_WORKING_DIR     0xAA
 #define USER_INPUT_DIR          0xBB
+
+volatile sig_atomic_t stop = 0;
 
 /*
     * Return the current time in nanoseconds.
@@ -98,6 +103,12 @@ static int write_usage(const char* error_msg)
     return write_all(STDERR_FILENO, error_msg, strlen(error_msg));
 }
 
+void signal_handle(int sig)
+{
+    (void) sig;
+    stop = 1;
+}
+
 /*
     * Entry point for the mini log writer.
     * Steps:
@@ -112,8 +123,9 @@ int main(int argc, char* argv[])
     uint8_t durable = DISABLE;
     unsigned long max_byte_val;    
     uint8_t max_bytes_config = DISABLE;
-    uint8_t dir_cwd_or_upd  = CURRENT_WORKING_DIR;  // tracks cwd vs user-provided directory
     
+    signal(SIGINT, signal_handle);
+
     // Validate argument count.
     if(argc < 3 || argc > 6)
     {
@@ -121,7 +133,7 @@ int main(int argc, char* argv[])
     }
 
     // 1. Read command-line arguments.
-    for(uint8_t arg_idx = 3; arg_idx < argc; arg_idx++)
+    for(int arg_idx = 3; arg_idx < argc; arg_idx++)
     {
         if(strcmp(argv[arg_idx],"--durable") == 0) 
         {
@@ -160,15 +172,7 @@ int main(int argc, char* argv[])
     if(msg[0] == '\0')
         return write_usage("Log message is Empty.\n");
 
-    if(max_bytes_config == ENABLE)
-    {
-        // Track whether the path includes a directory.
-        if(strchr(file_path,'/') == NULL)
-            dir_cwd_or_upd = CURRENT_WORKING_DIR; // current working directory
-        else
-            dir_cwd_or_upd = USER_INPUT_DIR;
-    }
-   
+  
     // 3. Check whether the log path already exists.
     struct stat fstat_old;
     int file1_exist = stat(file_path, &fstat_old); 
@@ -238,7 +242,7 @@ int main(int argc, char* argv[])
         unsigned long long cur_file_size = (unsigned long long)fstat_old.st_size;
         unsigned long long new_file_size = (unsigned long long)cur_file_size + log_len;
 
-        if(cur_file_size < new_file_size)
+        if(max_byte_val < new_file_size)
         {
             char new_path[4096];
             int n = snprintf(new_path, sizeof(new_path), "%s.1", file_path);
@@ -249,6 +253,7 @@ int main(int argc, char* argv[])
                 return 1;
             }
 
+            unlink(new_path); // if the file already exist remove it
             if(rename(file_path, new_path) < 0)
             {
                 perror("rename");
@@ -256,16 +261,8 @@ int main(int argc, char* argv[])
             }
 
             // sync the local directory
-            int fd_dir = 0;
-            if(dir_cwd_or_upd == CURRENT_WORKING_DIR)
-            {
-                fd_dir = open(".", O_RDONLY);
-            }
-            else
-            {
-                // TODO : yet to be implemented for user input directory
-                //fd_dir = open(file_path, O_RDONLY);
-            }
+            int fd_dir = fd_dir = open(".", O_RDONLY | O_DIRECTORY);
+
             if(fd_dir < 0)
             {
                 perror("open");
@@ -325,6 +322,14 @@ int main(int argc, char* argv[])
             close(fd);
             return 1;
         }
+    }
+
+    if(stop == 1)
+    {
+        char* error_msg = "Caught SIGINT, existing cleanly.\n";
+        write_all(STDERR_FILENO, error_msg, strlen(error_msg));
+        close(fd);
+        return 1;
     }
 
     // 8. Write the log entry.
