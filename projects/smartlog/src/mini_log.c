@@ -32,6 +32,7 @@
 #include <sys/stat.h>
 #include <string.h>
 #include <time.h>
+#include <stdlib.h>
 
 #define MESSAGE_LEN_MAX   200
 
@@ -106,29 +107,55 @@ int main(int argc, char* argv[])
 {
     uint8_t durable = 0;
     
-    // 1. Read command-line arguments
-    if(argc == 4)
+    // Command line argument count validation
+    if(argc < 3 || argc > 6)
     {
-        if(strcmp(argv[3], "--durable") == 0)
+        return write_usage("Usage :./mini_log <file_path> \"<message>\" [--durable] [--max-bytes] [size]\n"); 
+    }
+
+    // 1. Read command-line arguments
+    for(uint8_t arg_idx = 3; arg_idx < argc; arg_idx++)
+    {
+        if(strcmp(argv[arg_idx],"--durable") == 0) 
         {
             durable = 1;
         }
+        else if(strcmp(argv[arg_idx], "--max-bytes") == 0)
+        {
+            // Check if the max-bytes values are provided
+            if(argc <= (arg_idx + 1))
+            {
+                return write_usage("Usage : max-bytes values are missig.\n"); 
+            }
+
+            unsigned long max_byte_val;
+
+            arg_idx += 1;
+            // convert the max-bytes value from string to unsigned long
+            max_byte_val = strtoul(argv[arg_idx],NULL, 10);
+
+            // Check if the max byte values are valid.
+            if(max_byte_val == 0)
+                return write_usage("Usage : max-bytes values must not be 0.\n"); 
+
+        }
         else
         {
-            return write_usage("Usage : ./mini_log <file_path> \"<message>\" [--durable]\n");
-        }  
-    }
-    else if(argc != 3)
-    {
-        return write_usage("Usage : ./mini_log <file_path> \"<message>\" [--durable]\n");
+            // Return when the command line arguments has unknown values.
+            return write_usage("Error! Unknown option.\nUsage :./mini_log <file_path> \"<message>\" [--durable] [--max-bytes] [size]\n"); 
+        }
+
     }
 
     const char* file_path = argv[1];
     const char* msg = argv[2];
     size_t msg_len = strlen(msg);
 
+    // Message must not be empty to log
     if(msg[0] == '\0')
         return write_usage("Log message is Empty.\n");
+
+    printf("Path of the log file is: %s\n", file_path);
    
     // 2. Check whether the file exists and is not a directory
     struct stat fstat_old;
@@ -180,8 +207,6 @@ int main(int argc, char* argv[])
     // Re-check permissions if the file was created by open().
     struct stat fstat_new;
     int file2_exist = stat(file_path, &fstat_new);
-    int stat2_errno = errno;
-    
     
     if(file1_exist !=0 && stat1_errno == ENOENT)
     {
