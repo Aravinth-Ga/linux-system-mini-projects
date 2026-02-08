@@ -68,6 +68,7 @@ static int write_all(int file_descriptor, const void* msg_buff, size_t msg_lengt
     const char* message = (const char*) msg_buff;
     size_t total = 0;
     ssize_t bytes_written = 0;
+    errno = 0;
 
     while(total < msg_length)
     {
@@ -121,7 +122,7 @@ void signal_handle(int sig)
 int main(int argc, char* argv[])
 {
     uint8_t durable = DISABLE;
-    unsigned long max_byte_val;    
+    unsigned long max_byte_val = 0;    
     uint8_t max_bytes_config = DISABLE;
     
     signal(SIGINT, signal_handle);
@@ -146,18 +147,22 @@ int main(int argc, char* argv[])
                 return write_usage("Usage : max-bytes values are missig.\n"); 
 
             arg_idx += 1;
+            char* endpoint;
+            errno = 0;
             // Parse the max-bytes value.
-            max_byte_val = strtoul(argv[arg_idx],NULL, 10);
+            unsigned long temp = strtoul(argv[arg_idx], &endpoint, 10);
+
+            if(endpoint == argv[arg_idx] || *endpoint != '\0' || errno == ERANGE || temp == 0)
+                return write_usage("Error: --max-bytes requires a positive integer\n");
+
+            max_byte_val = temp;
             max_bytes_config = ENABLE;
 
-            // Reject zero as invalid.
-            if(max_byte_val == 0)
-                return write_usage("Usage : max-bytes values must not be 0.\n"); 
         }
         else
         {
             // Unknown option.
-            return write_usage("Error! Unknown option.\nUsage :./mini_log <file_path> \"<message>\" [--durable] [--max-bytes] [size]\n"); 
+            return write_usage("Error: Unknown option.\nUsage :./mini_log <file_path> \"<message>\" [--durable] [--max-bytes] [size]\n"); 
         }
 
     }
@@ -253,7 +258,14 @@ int main(int argc, char* argv[])
                 return 1;
             }
 
-            unlink(new_path); // if the file already exist remove it
+            if(unlink(new_path) < 0)
+            {
+                if(errno != ENOENT)
+                {
+                    perror("unlink");
+                    return 1;
+                }
+            }
             if(rename(file_path, new_path) < 0)
             {
                 perror("rename");
@@ -261,7 +273,7 @@ int main(int argc, char* argv[])
             }
 
             // sync the local directory
-            int fd_dir = fd_dir = open(".", O_RDONLY | O_DIRECTORY);
+            int fd_dir = open(".", O_RDONLY | O_DIRECTORY);
 
             if(fd_dir < 0)
             {
@@ -272,12 +284,14 @@ int main(int argc, char* argv[])
             if(fsync(fd_dir)< 0)
             {
                 perror("fsync");
+                close(fd_dir);
                 return 1;
             }
 
             if(close(fd_dir) < 0)
             {
                 perror("close");
+                return 1;
             }
 
             // Ensure the flags are set once the file is renamed.
@@ -326,8 +340,8 @@ int main(int argc, char* argv[])
 
     if(stop == 1)
     {
-        char* error_msg = "Caught SIGINT, existing cleanly.\n";
-        write_all(STDERR_FILENO, error_msg, strlen(error_msg));
+        const char* error_msg = "Caught SIGINT, exiting cleanly.\n";
+        write(STDERR_FILENO, error_msg, strlen(error_msg));
         close(fd);
         return 1;
     }
