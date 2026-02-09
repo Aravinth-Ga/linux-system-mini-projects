@@ -111,6 +111,84 @@ void signal_handle(int sig)
 }
 
 /*
+    * Sync the parent directory to ensure metadata changes
+    * (like file renames) are persisted to disk.
+    * Returns 0 on success, 1 on error.
+*/
+int fsync_parent_dir(const char* path)
+{
+    // Check the argument is valid
+    if(!path || path[0] == '\0')
+    {
+        errno = EINVAL;
+        return 1;
+    }
+
+    char temp[4096];
+    size_t len = strnlen(path, sizeof(temp));
+    if(sizeof(temp) <= len)
+    {
+        errno = ENAMETOOLONG;
+        return 1;
+    }
+
+    memcpy(temp, path, len + 1);  //    
+
+    char* slash = strrchr(temp, '/');
+    const char* dir_path = NULL;
+    
+    if(!slash)
+    {
+        dir_path = ".";
+    }
+    else if(slash == temp)
+    {
+        temp[1] = '\0';
+        dir_path = temp;
+    }
+    else
+    {
+        *slash = '\0';
+        if(temp[0] == '\0')
+        {
+            dir_path = ".";
+        }
+        else
+        {
+            dir_path = temp;
+        }
+    }
+
+
+    // Open the directory for syncing
+    int fd_dir = open(dir_path, O_RDONLY | O_DIRECTORY);
+    if(fd_dir < 0)
+    {
+        return 1;
+    }
+
+    // Flush directory metadata to disk
+    if(fsync(fd_dir) < 0)
+    {
+        int errno_pre = errno;
+        close(fd_dir);
+        errno = errno_pre;
+        return 1;
+    }
+
+    // Close the directory file descriptor
+
+    if(close(fd_dir) < 0)
+    {
+        return 1;
+    }
+    
+    
+    return 0;
+}
+
+
+/*
     * Entry point for the mini log writer.
     * Steps:
     * 1) parse arguments
@@ -273,27 +351,15 @@ int main(int argc, char* argv[])
                 return 1;
             }
 
-            // sync the local directory
-            int fd_dir = open(".", O_RDONLY | O_DIRECTORY);
-
-            if(fd_dir < 0)
+            // Sync the parent directory to ensure metadata persistence
+            if (durable == ENABLE) 
             {
-                perror("open");
-                return 1;
-            }
-
-            if(fsync(fd_dir)< 0)
-            {
-                perror("fsync");
-                close(fd_dir);
-                return 1;
-            }
-
-            if(close(fd_dir) < 0)
-            {
-                perror("close");
-                return 1;
-            }
+                if (fsync_parent_dir(file_path) != 0) 
+                {
+                    perror("fsync parent dir (rotate)");
+                    return 1;
+                }
+            }            
 
             // Ensure the flags are set once the file is renamed.
             stat1_errno = ENOENT;
@@ -358,18 +424,27 @@ int main(int argc, char* argv[])
     // 9. Durability: flush data to disk when --durable is used.
     if(durable != 0)
     {
-        printf("durability is enabled = %d\n", durable);
         /*
             fdatasync() flushes written data to disk. This makes the write
             durable across crashes or power loss. It is usually faster than
             fsync() because it does not have to flush all metadata.
         */
-       if(fdatasync(fd) < 0)
-       {
+        if(fdatasync(fd) < 0)
+        {
             perror("fdatasync");
             close(fd);
             return 1;
-       }
+        }
+
+        if (durable == ENABLE && file1_exist !=0 && stat1_errno == ENOENT)
+        {
+            if (fsync_parent_dir(file_path) != 0) 
+            {
+                perror("fsync parent dir (create)");
+                close(fd);
+                return 1;
+            }
+        }         
 
     }
 
