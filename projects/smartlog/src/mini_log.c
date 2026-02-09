@@ -124,6 +124,7 @@ int main(int argc, char* argv[])
     uint8_t durable = DISABLE;
     unsigned long max_byte_val = 0;    
     uint8_t max_bytes_config = DISABLE;
+    struct stat fstat_new;
     
     signal(SIGINT, signal_handle);
 
@@ -317,8 +318,7 @@ int main(int argc, char* argv[])
     }
 
     // 7. Re-check permissions if the file was created by open().
-    struct stat fstat_new;
-    int file2_exist = stat(file_path, &fstat_new);
+    int file2_exist = fstat(fd, &fstat_new);
     
     if(file1_exist !=0 && stat1_errno == ENOENT)
     {
@@ -341,7 +341,7 @@ int main(int argc, char* argv[])
     if(stop == 1)
     {
         const char* error_msg = "Caught SIGINT, exiting cleanly.\n";
-        write(STDERR_FILENO, error_msg, strlen(error_msg));
+        write_all(STDERR_FILENO, error_msg, strlen(error_msg));
         close(fd);
         return 1;
     }
@@ -358,6 +358,7 @@ int main(int argc, char* argv[])
     // 9. Durability: flush data to disk when --durable is used.
     if(durable != 0)
     {
+        printf("durability is enabled = %d\n", durable);
         /*
             fdatasync() flushes written data to disk. This makes the write
             durable across crashes or power loss. It is usually faster than
