@@ -6,10 +6,6 @@ A simple logging tool written in C for Linux. It saves what your program does to
 
 SmartLog is a minimal way to log messages. You write a message, it gets saved to a file with a timestamp. That's it. Nothing fancy, just the basics that work.
 
-## What It Supports
-
-Write text messages to a log file. Automatic timestamps on every message. Create log files if they don't exist. Append new messages to existing logs. Save logs to any directory you want. Flush data to disk for safety. Handles system interruptions without losing messages. Works directly with C code.
-
 ## Features
 
 Fast and lightweight. Adds timestamps automatically. Works in any directory you want. Handles interruptions safely. Easy to use from C code.
