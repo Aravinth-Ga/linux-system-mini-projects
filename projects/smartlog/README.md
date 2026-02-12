@@ -1,54 +1,77 @@
 # SmartLog
 
-A simple logging tool written in C for Linux. It saves what your program does to a file with the exact time it happened.
+SmartLog is a small Linux logging project in C.
+It provides a reusable core API and a CLI tool (`mini_log`) to append timestamped log lines to a file.
 
-## What Is This?
+## Current Status
 
-SmartLog is a minimal way to log messages. You write a message, it gets saved to a file with a timestamp. That's it. Nothing fancy, just the basics that work.
+- Core logging code is implemented in `src/`.
+- Public headers are in `include/smartlog/`.
+- `examples/` and `test/` are placeholders right now.
+- `CMakeLists.txt` exists but is currently empty.
 
-## Features
+## Features (Current)
 
-Fast and lightweight. Adds timestamps automatically. Works in any directory you want. Handles interruptions safely. Easy to use from C code.
+- Writes log lines with timestamp (nanoseconds) and PID.
+- Creates the log file if it does not exist.
+- Appends safely using retry logic for interrupted writes (`EINTR`).
+- Optional durable mode (`--durable`) using `fdatasync` + parent dir `fsync`.
+- Optional single-backup rotation (`--max-bytes <N>`) to `file.1`.
+- Message size limit is 256 bytes (long messages are truncated with `...`).
 
-## How to Use
+## CLI Usage
 
-Build it with CMake:
-
-```
-mkdir build
-cd build
-cmake ..
-make
-```
-
-Then in your C code, call the logger:
-
-```
-log_message("Application started");
-log_message("Processing file");
-log_message("Done");
+```bash
+./mini_log <file_path> "<message>" [--durable] [--max-bytes <size>]
 ```
 
-Each message gets written to your log file with a timestamp. No setup needed.
+Examples:
 
-## What's Inside
+```bash
+./mini_log app.log "server started"
+./mini_log app.log "payment done" --durable
+./mini_log app.log "worker heartbeat" --max-bytes 1048576
+```
 
-src/ - The logging code
-include/ - Headers to use it
-examples/ - Sample code
-test/ - Tests
-CMakeLists.txt - Build config
+## Build (Current)
 
-## How It Works
+Since `CMakeLists.txt` is empty, build directly with `gcc` for now:
 
-SmartLog uses standard Linux calls to write messages to a file. It takes care of creating the file if needed, adding messages to the end, and making sure everything gets saved properly. If something interrupts a write, it tries again.
+```bash
+gcc -Wall -Wextra -std=c11 \
+  src/mini_log.c src/smartlog_core.c src/utils.c \
+  -o mini_log
+```
 
-## What It Doesn't Do
+## C API
 
-No log levels like DEBUG or ERROR. No rotating log files when they get big. Not safe for multiple threads. No custom formatting.
+Header:
 
-If you need those things, use a bigger logging library. If you want something simple that just works, this is it.
+- `include/smartlog/smartlog_core.h`
 
-## Author
+Main function:
 
-Aravinthraj Ganesan
+```c
+int smartlog_write_log_entry(
+    const char* file_path,
+    const char* msg,
+    feature_state_t durable,
+    feature_state_t max_bytes_config,
+    unsigned long max_byte_val
+);
+```
+
+## Repo Layout
+
+- `src/mini_log.c`: CLI entry point and option parsing
+- `src/smartlog_core.c`: core logging logic
+- `src/utils.c`: time, write-all, and directory sync helpers
+- `include/smartlog/config.h`: limits and feature flags
+- `include/smartlog/smartlog_core.h`: public API
+
+## Not Included Yet
+
+- Multiple backup generations for rotation
+- Log levels and formatting options
+- Thread-safe shared logger state
+- Completed tests and examples
