@@ -37,7 +37,7 @@
  * Project Includes
  * ============================================================================ */
 
-#include "utils.h"
+#include "../include/smartlog/utils.h"
 #include "../include/smartlog/config.h"
 #include "../include/smartlog/smartlog_core.h"
 

@@ -1,5 +1,5 @@
 /*
- * src/utils.h
+ * include/smartlog/utils.h
  *
  * Helper functions for SmartLog.
  *

@@ -26,7 +26,7 @@
 #include <stdio.h>
 
 /* Project includes */
-#include "utils.h"
+#include "../include/smartlog/utils.h"
 #include "../include/smartlog/config.h"
 
 /* ============================================================================
