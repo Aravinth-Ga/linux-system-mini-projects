@@ -42,6 +42,89 @@
 #include "../include/smartlog/smartlog_core.h"
 
 /* ============================================================================
+ * Internal Helpers
+ * ============================================================================ */
+
+static int smartlog_rotate_if_needed(
+    const char* file_path,
+    feature_state_t durable,
+    feature_state_t max_bytes_config,
+    unsigned long max_byte_val,
+    int log_len,
+    const struct stat* fstat_old,
+    int* file1_exist,
+    int* stat1_errno
+)
+{
+    if(max_bytes_config != FEATURE_ENABLED || *file1_exist != 0)
+    {
+        return 0;
+    }
+
+    /* Calculate potential new file size if this log entry is added */
+    unsigned long long cur_file_size = (unsigned long long)fstat_old->st_size;
+    unsigned long long new_file_size = (unsigned long long)cur_file_size + (unsigned long long)log_len;
+
+    /* If adding this entry exceeds max_byte_val, perform rotation */
+    if(max_byte_val >= new_file_size)
+    {
+        return 0;
+    }
+
+    /* Build backup filename by appending ".1" */
+    char new_path[SMARTLOG_PATH_MAX_LEN];
+    int n = snprintf(new_path, sizeof(new_path), "%s.1", file_path);
+
+    if(n < 0 || n >= (int)sizeof(new_path))
+    {
+        perror("snprintf");
+        return 1;
+    }
+
+    /*
+     * Remove existing .1 backup file if it exists (we'll replace it).
+     * Ignore ENOENT error (file doesn't exist).
+     */
+    if(unlink(new_path) < 0)
+    {
+        if(errno != ENOENT)
+        {
+            perror("unlink");
+            return 1;
+        }
+    }
+
+    /* Rename current log file to .1 backup */
+    if(rename(file_path, new_path) < 0)
+    {
+        perror("rename");
+        return 1;
+    }
+
+    /*
+     * In durable mode: sync parent directory to ensure metadata changes
+     * (the rename operation) persist to disk before continuing.
+     */
+    if(durable == FEATURE_ENABLED)
+    {
+        if(smartlog_fsync_parent_dir(file_path) != 0)
+        {
+            perror("fsync parent dir (rotate)");
+            return 1;
+        }
+    }
+
+    /*
+     * Update file existence check - the original file no longer exists
+     * after rename, so the open() below will create a new file.
+     */
+    *stat1_errno = ENOENT;
+    *file1_exist = -1;
+
+    return 0;
+}
+
+/* ============================================================================
  * Core Logging Implementation
  * ============================================================================ */
 
@@ -155,66 +238,18 @@ int smartlog_write_log_entry(
      * check whether adding this log entry would exceed the limit.
      * If so, rotate the log file by renaming current to .1 backup.
      */
-    if(max_bytes_config == FEATURE_ENABLED && file1_exist == 0)
+    if(smartlog_rotate_if_needed(
+        file_path,
+        durable,
+        max_bytes_config,
+        max_byte_val,
+        log_len,
+        &fstat_old,
+        &file1_exist,
+        &stat1_errno
+    ) != 0)
     {
-        /* Calculate potential new file size if this log entry is added */
-        unsigned long long cur_file_size = (unsigned long long)fstat_old.st_size;
-        unsigned long long new_file_size = (unsigned long long)cur_file_size + log_len;
-
-        /* If adding this entry exceeds max_byte_val, perform rotation */
-        if(max_byte_val < new_file_size)
-        {
-            /* Build backup filename by appending ".1" */
-            char new_path[SMARTLOG_PATH_MAX_LEN];
-            int n = snprintf(new_path, sizeof(new_path), "%s.1", file_path);
-
-            if(n < 0 || n >= (int)sizeof(new_path))
-            {
-                perror("snprintf");
-                return 1;
-            }
-
-            /* 
-             * Remove existing .1 backup file if it exists (we'll replace it).
-             * Ignore ENOENT error (file doesn't exist).
-             */
-            if(unlink(new_path) < 0)
-            {
-                if(errno != ENOENT)
-                {
-                    perror("unlink");
-                    return 1;
-                }
-            }
-
-            /* Rename current log file to .1 backup */
-            if(rename(file_path, new_path) < 0)
-            {
-                perror("rename");
-                return 1;
-            }
-
-            /* 
-             * In durable mode: sync parent directory to ensure metadata changes
-             * (the rename operation) persist to disk before continuing.
-             */
-            if (durable == FEATURE_ENABLED) 
-            {
-                if (smartlog_fsync_parent_dir(file_path) != 0) 
-                {
-                    perror("fsync parent dir (rotate)");
-                    return 1;
-                }
-            }            
-
-            /* 
-             * Update file existence check - the original file no longer exists
-             * after rename, so the open() below will create a new file.
-             */
-            stat1_errno = ENOENT;
-            file1_exist = -1;
-        }
-
+        return 1;
     }
 
     /* ====================================================================
