@@ -26,8 +26,8 @@
 #include <stdio.h>
 
 /* Project includes */
-#include "../include/smartlog/utils.h"
-#include "../include/smartlog/config.h"
+#include <smartlog/utils.h>
+#include <smartlog/config.h>
 
 /* ============================================================================
  * Timestamp Function
@@ -39,9 +39,12 @@
 uint64_t smartlog_timestamp_ns(void)
 {
     struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
+    if(clock_gettime(CLOCK_REALTIME, &ts) != 0)
+    {
+        return 0;
+    }
 
-    return ((uint64_t) (ts.tv_sec * 1000000000ull) + (uint64_t)ts.tv_nsec);
+    return ((uint64_t)ts.tv_sec * UINT64_C(1000000000)) + (uint64_t)ts.tv_nsec;
 }
 
 /* ============================================================================
@@ -73,14 +76,14 @@ int smartlog_write_all(int file_descriptor, const void* msg_buff, size_t msg_len
             else
             {
                 /* Real error */
-                return 1;
+                return -1;
             }
         }
         else if(bytes_written == 0)
         {
             /* Zero bytes - unexpected */
             errno = EIO;
-            return 1;
+            return -1;
         }
         else
         {
@@ -99,16 +102,13 @@ int smartlog_write_all(int file_descriptor, const void* msg_buff, size_t msg_len
 /**
  * Sync parent directory to disk.
  */
-/**
- * Sync parent directory to disk.
- */
 int smartlog_fsync_parent_dir(const char* path)
 {
     /* Validate input */
     if(!path || path[0] == '\0')
     {
         errno = EINVAL;
-        return 1;
+        return -1;
     }
 
     /* Check path length */
@@ -117,7 +117,7 @@ int smartlog_fsync_parent_dir(const char* path)
     if(sizeof(temp) <= len)
     {
         errno = ENAMETOOLONG;
-        return 1;
+        return -1;
     }
 
     /* Copy path for manipulation */
@@ -156,7 +156,7 @@ int smartlog_fsync_parent_dir(const char* path)
     int fd_dir = open(dir_path, O_RDONLY | O_DIRECTORY);
     if(fd_dir < 0)
     {
-        return 1;
+        return -1;
     }
 
     /* Sync to disk */
@@ -165,13 +165,13 @@ int smartlog_fsync_parent_dir(const char* path)
         int errno_pre = errno;
         close(fd_dir);
         errno = errno_pre;
-        return 1;
+        return -1;
     }
 
     /* Close */
     if(close(fd_dir) < 0)
     {
-        return 1;
+        return -1;
     }
 
     return 0;

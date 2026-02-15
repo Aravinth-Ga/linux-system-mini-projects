@@ -18,7 +18,7 @@
 #ifndef SMARTLOG_CORE_H
 #define SMARTLOG_CORE_H
 
-#include "config.h"
+#include <smartlog/config.h>
 
 /* ============================================================================
  * Core Logging Functions
@@ -34,10 +34,10 @@
  *   max_bytes_config - If on, rotate file when too big
  *   max_byte_val     - Max size before rotation
  *
- * Return: 0 on success, 1 on error
+ * Return: 0 on success, 1 on error (errno is set)
  *
  * What it does:
- *   - Check if file exists and show permissions
+ *   - Check file path validity
  *   - Rotate file if it is too big
  *   - Write message with timestamp and process ID
  *   - Sync to disk if durable mode is on

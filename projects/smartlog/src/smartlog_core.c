@@ -37,9 +37,9 @@
  * Project Includes
  * ============================================================================ */
 
-#include "../include/smartlog/utils.h"
-#include "../include/smartlog/config.h"
-#include "../include/smartlog/smartlog_core.h"
+#include <smartlog/utils.h>
+#include <smartlog/config.h>
+#include <smartlog/smartlog_core.h>
 
 /* ============================================================================
  * Internal Helpers
@@ -77,7 +77,7 @@ static int smartlog_rotate_if_needed(
 
     if(n < 0 || n >= (int)sizeof(new_path))
     {
-        perror("snprintf");
+        errno = ENAMETOOLONG;
         return 1;
     }
 
@@ -89,7 +89,6 @@ static int smartlog_rotate_if_needed(
     {
         if(errno != ENOENT)
         {
-            perror("unlink");
             return 1;
         }
     }
@@ -97,7 +96,6 @@ static int smartlog_rotate_if_needed(
     /* Rename current log file to .1 backup */
     if(rename(file_path, new_path) < 0)
     {
-        perror("rename");
         return 1;
     }
 
@@ -109,7 +107,6 @@ static int smartlog_rotate_if_needed(
     {
         if(smartlog_fsync_parent_dir(file_path) != 0)
         {
-            perror("fsync parent dir (rotate)");
             return 1;
         }
     }
@@ -136,6 +133,12 @@ int smartlog_write_log_entry(
     unsigned long max_byte_val
 )
 {
+    if(file_path == NULL || msg == NULL)
+    {
+        errno = EINVAL;
+        return 1;
+    }
+
     /* ====================================================================
      * STEP 1: Validate Log Message and Check File Existence
      * ==================================================================== */
@@ -145,7 +148,7 @@ int smartlog_write_log_entry(
     /* Message must not be empty - check for empty string */
     if(msg[0] == '\0')
     {
-        fprintf(stderr, "Error: Log message is empty.\n");
+        errno = EINVAL;
         return 1;
     }
 
@@ -154,33 +157,24 @@ int smartlog_write_log_entry(
      * This determines whether we're appending or creating new.
      */
     struct stat fstat_old;
-    int file1_exist = stat(file_path, &fstat_old); 
+    errno = 0;
+    int file1_exist = stat(file_path, &fstat_old);
     int stat1_errno = errno;
 
-    /* If the file exists, verify it's not a directory and print its metadata */
+    /* If the file exists, verify it's not a directory */
     if(file1_exist == 0) 
     {
         if(S_ISDIR(fstat_old.st_mode) != 0)
         {
-            fprintf(stderr, "Error : %s is a directory. Provide a file name.\n", file_path);
+            errno = EISDIR;
             return 1;
-        }
-        else
-        {
-            /* File exists and is not a directory - print permission details */
-            printf("[LOG FILE PERMISSION CHECK]\n");            
-            printf("The file %s exists.\n", file_path);
-            printf("Owner UID : %u\n", fstat_old.st_uid);
-            printf("Group ID : %u\n", fstat_old.st_gid);
-            printf("File Permission : %04o\n", fstat_old.st_mode & 0777);        
-        }             
+        }            
     }
     else 
     {
         /* If stat() failed, verify the error is just ENOENT (file doesn't exist) */
         if(stat1_errno != ENOENT)
         {   
-            perror("stat");
             return 1;
         }
         /* File doesn't exist - will be created by open() with O_CREAT flag */
@@ -226,7 +220,7 @@ int smartlog_write_log_entry(
     /* Verify snprintf didn't fail or truncate output buffer */
     if(log_len < 0 || (log_len >= (int)sizeof(log_buffer)))
     {
-        perror("snprintf");
+        errno = EOVERFLOW;
         return 1;
     }   
 
@@ -276,7 +270,6 @@ int smartlog_write_log_entry(
     /* Verify open() succeeded */
     if(fd < 0)
     {
-        perror("open");
         return 1;
     }
 
@@ -287,26 +280,15 @@ int smartlog_write_log_entry(
      * Get file descriptor stats to verify permissions.
      * If file was newly created, confirm it has expected permissions.
      */
-    struct stat fstat_new;
-    int file2_exist = fstat(fd, &fstat_new);
-    
-    /* If original file didn't exist and was just created, print new permissions */
+    /* If original file didn't exist and was just created, verify fstat works */
     if(file1_exist != 0 && stat1_errno == ENOENT)
     {
-        if(file2_exist == 0)
+        struct stat fstat_new;
+        if(fstat(fd, &fstat_new) != 0)
         {
-            /* Successfully created new file - display its metadata */
-            printf("[LOG FILE PERMISSION CHECK]\n");            
-            printf("The file %s does not exist and is created now.\n", file_path);
-            printf("Owner UID : %u\n", fstat_new.st_uid);
-            printf("Group ID : %u\n", fstat_new.st_gid);
-            printf("File Permission : %04o\n", fstat_new.st_mode & 0777);        
-        }
-        else
-        {
-            /* fstat() failed unexpectedly */
-            perror("stat");
+            int saved_errno = errno;
             close(fd);
+            errno = saved_errno;
             return 1;
         }
     }
@@ -318,10 +300,11 @@ int smartlog_write_log_entry(
      * Write the formatted log entry to the file descriptor.
      * Uses smartlog_write_all() to ensure complete write even if interrupted.
      */
-    if(smartlog_write_all(fd, (const unsigned char*)log_buffer, log_len) != 0)
+    if(smartlog_write_all(fd, log_buffer, (size_t)log_len) != 0)
     {
-        perror("write");
+        int saved_errno = errno;
         close(fd);
+        errno = saved_errno;
         return 1;
     }
 
@@ -338,16 +321,18 @@ int smartlog_write_log_entry(
         /* Sync file data to disk */
         if(fdatasync(fd) != 0)
         {
-            perror("fdatasync");
+            int saved_errno = errno;
             close(fd);
+            errno = saved_errno;
             return 1;
         }
 
         /* Sync parent directory metadata to ensure rename/create is persistent */
         if(smartlog_fsync_parent_dir(file_path) != 0)
         {
-            perror("fsync parent dir (write)");
+            int saved_errno = errno;
             close(fd);
+            errno = saved_errno;
             return 1;
         }
     }
@@ -358,7 +343,6 @@ int smartlog_write_log_entry(
     /* Close file descriptor - all operations complete */
     if(close(fd) < 0)
     {
-        perror("close");
         return 1;
     }
 

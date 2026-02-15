@@ -27,7 +27,7 @@
  *
  * Uses CLOCK_REALTIME system clock.
  *
- * Return: Time value in nanoseconds
+ * Return: Time value in nanoseconds (0 on error)
  */
 uint64_t smartlog_timestamp_ns(void);
 
@@ -52,7 +52,7 @@ int smartlog_write_all(int fd, const void* data, size_t size);
  * Parameters:
  *   path - Path to a file (uses its parent directory)
  *
- * Return: 0 on success, 1 on error
+ * Return: 0 on success, -1 on error
  */
 int smartlog_fsync_parent_dir(const char* path);
 

@@ -40,9 +40,9 @@
  * Project Includes
  * ============================================================================ */
 
-#include "../include/smartlog/utils.h"
-#include "../include/smartlog/config.h"
-#include "../include/smartlog/smartlog_core.h"
+#include <smartlog/utils.h>
+#include <smartlog/config.h>
+#include <smartlog/smartlog_core.h>
 
 /* ============================================================================
  * Global Variables
@@ -61,14 +61,15 @@ volatile sig_atomic_t stop = 0;
  */
 static int write_usage(const char* error_msg)
 {
-    return smartlog_write_all(STDERR_FILENO, error_msg, strlen(error_msg));
+    (void)smartlog_write_all(STDERR_FILENO, error_msg, strlen(error_msg));
+    return 2;
 }
 
 /**
  * Signal handler for graceful shutdown.
  * Sets global flag when SIGINT is received.
  */
-void signal_handle(int sig)
+static void signal_handle(int sig)
 {
     (void) sig;  /* Unused parameter */
     stop = 1;
@@ -96,7 +97,11 @@ int main(int argc, char* argv[])
      * STEP 1: Register Signal Handler
      * ==================================================================== */
     /* Set up graceful shutdown handler for SIGINT (Ctrl+C) */
-    signal(SIGINT, signal_handle);
+    if(signal(SIGINT, signal_handle) == SIG_ERR)
+    {
+        perror("signal");
+        return 1;
+    }
 
     /* ====================================================================
      * STEP 2: Validate Command-Line Argument Count
@@ -104,7 +109,7 @@ int main(int argc, char* argv[])
     /* Require at least 3 arguments: program, file path, message */
     if(argc < 3 || argc > 6)
     {
-        return write_usage("Usage :./mini_log <file_path> \"<message>\" [--durable] [--max-bytes] [size]\n"); 
+        return write_usage("Usage: ./mini_log <file_path> \"<message>\" [--durable] [--max-bytes <size>]\n");
     }
 
     /* ====================================================================
@@ -126,10 +131,10 @@ int main(int argc, char* argv[])
         {
             /* Ensure a value is provided after --max-bytes */
             if(argc <= (arg_idx + 1))
-                return write_usage("Usage : max-bytes values are missig.\n"); 
+                return write_usage("Error: --max-bytes requires a value.\n");
 
             arg_idx += 1;
-            char* endpoint;
+            char* endpoint = NULL;
             errno = 0;
             /* Parse the max-bytes value as unsigned long integer */
             unsigned long temp = strtoul(argv[arg_idx], &endpoint, 10);
@@ -143,7 +148,7 @@ int main(int argc, char* argv[])
         else
         {
             /* Unknown option provided */
-            return write_usage("Error: Unknown option.\nUsage :./mini_log <file_path> \"<message>\" [--durable] [--max-bytes] [size]\n"); 
+            return write_usage("Error: Unknown option.\nUsage: ./mini_log <file_path> \"<message>\" [--durable] [--max-bytes <size>]\n");
         }
     }
 
@@ -161,6 +166,10 @@ int main(int argc, char* argv[])
         max_bytes_config,           /* rotation feature flag */
         max_byte_val                /* rotation size limit */
     );
+    if(result != 0)
+    {
+        perror("smartlog_write_log_entry");
+    }
 
     /* ====================================================================
      * STEP 5: Check for Signal and Return Status
@@ -169,7 +178,7 @@ int main(int argc, char* argv[])
     if(stop == 1)
     {
         const char* error_msg = "Caught SIGINT, exiting cleanly.\n";
-        smartlog_write_all(STDERR_FILENO, error_msg, strlen(error_msg));
+        (void)smartlog_write_all(STDERR_FILENO, error_msg, strlen(error_msg));
         return 1;
     }
 
