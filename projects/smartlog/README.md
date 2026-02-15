@@ -8,7 +8,7 @@ It provides a reusable core API and a CLI tool (`mini_log`) to append timestampe
 - Core logging code is implemented in `src/`.
 - Public headers are in `include/smartlog/`.
 - `examples/` and `test/` are placeholders right now.
-- `CMakeLists.txt` exists but is currently empty.
+- `CMakeLists.txt` builds both the library and CLI.
 
 ## Features (Current)
 
@@ -33,12 +33,20 @@ Examples:
 ./mini_log app.log "worker heartbeat" --max-bytes 1048576
 ```
 
-## Build (Current)
+## Build
 
-Since `CMakeLists.txt` is empty, build directly with `gcc` for now:
+Using CMake:
+
+```bash
+cmake -S . -B build
+cmake --build build
+```
+
+Direct `gcc` build:
 
 ```bash
 gcc -Wall -Wextra -std=c11 \
+  -Iinclude \
   src/mini_log.c src/smartlog_core.c src/utils.c \
   -o mini_log
 ```
@@ -68,6 +76,12 @@ int smartlog_write_log_entry(
 - `src/utils.c`: time, write-all, and directory sync helpers
 - `include/smartlog/config.h`: limits and feature flags
 - `include/smartlog/smartlog_core.h`: public API
+
+## CLI and Reusable API
+
+- CLI mode: use `mini_log` for command-line logging.
+- Library mode: call `smartlog_write_log_entry(...)` from your C code.
+- The core API is stdout-clean for embedding; on failure it returns non-zero and sets `errno`.
 
 ## Not Included Yet
 
