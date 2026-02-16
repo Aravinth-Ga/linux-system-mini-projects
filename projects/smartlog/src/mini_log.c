@@ -49,7 +49,7 @@
  * ============================================================================ */
 
 /** Signal handler flag - set to 1 when SIGINT is caught */
-volatile sig_atomic_t stop = 0;
+static volatile sig_atomic_t stop = 0;
 
 /* ============================================================================
  * Helper Functions
@@ -89,7 +89,7 @@ static void signal_handle(int sig)
  *   Step 4: Call smartlog_write_log_entry() with parsed parameters
  *   Step 5: Return exit status
  *
- * Return: 0 on success, 1 on error
+ * Return: 0 on success, non-zero on error
  */
 int main(int argc, char* argv[])
 {
@@ -97,9 +97,19 @@ int main(int argc, char* argv[])
      * STEP 1: Register Signal Handler
      * ==================================================================== */
     /* Set up graceful shutdown handler for SIGINT (Ctrl+C) */
-    if(signal(SIGINT, signal_handle) == SIG_ERR)
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = signal_handle;
+    sa.sa_flags = SA_RESTART;
+    if(sigemptyset(&sa.sa_mask) != 0)
     {
-        perror("signal");
+        perror("sigemptyset");
+        return 1;
+    }
+
+    if(sigaction(SIGINT, &sa, NULL) != 0)
+    {
+        perror("sigaction");
         return 1;
     }
 
@@ -168,18 +178,13 @@ int main(int argc, char* argv[])
     );
     if(result != 0)
     {
+        if(stop == 1 && errno == EINTR)
+        {
+            const char* error_msg = "Interrupted by SIGINT.\n";
+            (void)smartlog_write_all(STDERR_FILENO, error_msg, strlen(error_msg));
+            return 130;
+        }
         perror("smartlog_write_log_entry");
-    }
-
-    /* ====================================================================
-     * STEP 5: Check for Signal and Return Status
-     * ==================================================================== */
-    /* If SIGINT was caught during execution, report and return error */
-    if(stop == 1)
-    {
-        const char* error_msg = "Caught SIGINT, exiting cleanly.\n";
-        (void)smartlog_write_all(STDERR_FILENO, error_msg, strlen(error_msg));
-        return 1;
     }
 
     /* Return the result from core logging operation */

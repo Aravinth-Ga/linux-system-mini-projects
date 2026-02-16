@@ -38,6 +38,15 @@
  */
 uint64_t smartlog_timestamp_ns(void)
 {
+#ifdef SMARTLOG_TEST_FAULTS
+    const char* force_fail = getenv("SMARTLOG_FAKE_CLOCK_FAIL");
+    if(force_fail != NULL && strcmp(force_fail, "1") == 0)
+    {
+        errno = EIO;
+        return 0;
+    }
+#endif
+
     struct timespec ts;
     if(clock_gettime(CLOCK_REALTIME, &ts) != 0)
     {

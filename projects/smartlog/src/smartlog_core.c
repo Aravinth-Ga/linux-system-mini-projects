@@ -47,15 +47,17 @@
 
 static int smartlog_rotate_if_needed(
     const char* file_path,
-    feature_state_t durable,
     feature_state_t max_bytes_config,
     unsigned long max_byte_val,
     int log_len,
     const struct stat* fstat_old,
     int* file1_exist,
-    int* stat1_errno
+    int* stat1_errno,
+    int* rotated
 )
 {
+    *rotated = 0;
+
     if(max_bytes_config != FEATURE_ENABLED || *file1_exist != 0)
     {
         return 0;
@@ -100,23 +102,12 @@ static int smartlog_rotate_if_needed(
     }
 
     /*
-     * In durable mode: sync parent directory to ensure metadata changes
-     * (the rename operation) persist to disk before continuing.
-     */
-    if(durable == FEATURE_ENABLED)
-    {
-        if(smartlog_fsync_parent_dir(file_path) != 0)
-        {
-            return 1;
-        }
-    }
-
-    /*
      * Update file existence check - the original file no longer exists
      * after rename, so the open() below will create a new file.
      */
     *stat1_errno = ENOENT;
     *file1_exist = -1;
+    *rotated = 1;
 
     return 0;
 }
@@ -204,7 +195,12 @@ int smartlog_write_log_entry(
     }
 
     /* Get current timestamp in nanoseconds */
+    errno = 0;
     uint64_t time_ns = smartlog_timestamp_ns();
+    if(time_ns == 0 && errno != 0)
+    {
+        return 1;
+    }
     pid_t pid = getpid();   
     
     /* Format the complete log entry: [timestamp] [PID] [message] */
@@ -232,15 +228,16 @@ int smartlog_write_log_entry(
      * check whether adding this log entry would exceed the limit.
      * If so, rotate the log file by renaming current to .1 backup.
      */
+    int rotated = 0;
     if(smartlog_rotate_if_needed(
         file_path,
-        durable,
         max_bytes_config,
         max_byte_val,
         log_len,
         &fstat_old,
         &file1_exist,
-        &stat1_errno
+        &stat1_errno,
+        &rotated
     ) != 0)
     {
         return 1;
@@ -273,24 +270,11 @@ int smartlog_write_log_entry(
         return 1;
     }
 
-    /* ====================================================================
-     * STEP 5: Verify File Permissions After Open/Create
-     * ==================================================================== */
-    /* 
-     * Get file descriptor stats to verify permissions.
-     * If file was newly created, confirm it has expected permissions.
-     */
-    /* If original file didn't exist and was just created, verify fstat works */
+    /* Parent dir sync is only needed when metadata changed (create/rename). */
+    int metadata_changed = rotated;
     if(file1_exist != 0 && stat1_errno == ENOENT)
     {
-        struct stat fstat_new;
-        if(fstat(fd, &fstat_new) != 0)
-        {
-            int saved_errno = errno;
-            close(fd);
-            errno = saved_errno;
-            return 1;
-        }
+        metadata_changed = 1;
     }
 
     /* ====================================================================
@@ -327,8 +311,8 @@ int smartlog_write_log_entry(
             return 1;
         }
 
-        /* Sync parent directory metadata to ensure rename/create is persistent */
-        if(smartlog_fsync_parent_dir(file_path) != 0)
+        /* Sync parent directory metadata only if we created/renamed entries. */
+        if(metadata_changed != 0 && smartlog_fsync_parent_dir(file_path) != 0)
         {
             int saved_errno = errno;
             close(fd);
