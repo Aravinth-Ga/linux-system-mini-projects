@@ -26,5 +26,26 @@ target_compile_options(smartlog
 add_executable(mini_log src/mini_log.c)
 target_link_libraries(mini_log PRIVATE smartlog)
 
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(smartlog_tests
+        test/test_smartlog.c
+        src/smartlog_core.c
+        src/utils.c
+    )
+    target_include_directories(smartlog_tests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_compile_options(smartlog_tests
+        PRIVATE
+            -Wall
+            -Wextra
+            -Wpedantic
+    )
+    target_compile_definitions(smartlog_tests PRIVATE SMARTLOG_TEST_FAULTS=1)
+    add_test(NAME smartlog_tests COMMAND smartlog_tests)
+endif()
+
 install(TARGETS smartlog mini_log)
 install(DIRECTORY include/ DESTINATION include)
