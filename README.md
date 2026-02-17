@@ -32,13 +32,13 @@ Some ground rules I follow:
 
 ## Projects
 
-Work in progress.  
-Projects will be added here as they take shape.
+Active and evolving.  
+`smartlog` is functional today; `sentinel` has structure in place and is being implemented.
 
 | Project   | What it explores |
 |----------|------------------|
 | smartlog | File I/O, permissions, atomic writes, log structure |
-| (planned) | Signals, IPC, threads, polling, process control |
+| sentinel | Signals, IPC, threads, polling, process control (basic structure ready; implementation in progress) |
 
 ## Related repositories
 
