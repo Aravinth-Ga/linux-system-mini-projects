@@ -38,7 +38,7 @@ Active and evolving.
 | Project   | What it explores |
 |----------|------------------|
 | smartlog | File I/O, permissions, atomic writes, log structure |
-| sentinel | Signals, IPC, threads, polling, process control (basic structure ready; implementation in progress) |
+| sentinel | Signals, IPC, threads, polling, process control (implementation in progress) |
 
 ## Related repositories
 
